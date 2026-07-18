@@ -1,0 +1,5 @@
+pytest==8.3.3
+pytest-asyncio==0.23.7
+httpx==0.28.1
+ruff==0.15.21
+mypy==2.3.0
