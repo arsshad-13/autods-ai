@@ -71,3 +71,6 @@ env/
 # Python cache
 __pycache__/
 *.py[cod]
+
+backend/storage/uploads/*
+!backend/storage/uploads/.gitkeep

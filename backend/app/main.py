@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.api.v1.health import router as health_router
 from app.api.v1.auth import router as auth_router
+from app.api.v1.datasets import router as datasets_router
 
 # Setup basic logging
 logging.basicConfig(
@@ -44,3 +45,5 @@ app.add_middleware(
 # Include routers
 app.include_router(health_router, prefix=settings.API_V1_PREFIX)
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
+app.include_router(datasets_router, prefix=settings.API_V1_PREFIX)
+

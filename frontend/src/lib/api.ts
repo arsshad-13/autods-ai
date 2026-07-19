@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { useAuthStore } from './store';
-import { HealthResponse } from '@/types/api';
+import { HealthResponse, Dataset, DatasetListResponse } from '@/types/api';
 
 export class ApiError extends Error {
   constructor(message: string) {
@@ -79,3 +79,49 @@ export async function getHealth(): Promise<HealthResponse> {
     throw new ApiError("Failed to fetch health status");
   }
 }
+
+// Dataset APIs
+export async function uploadDataset(file: File): Promise<Dataset> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const res = await api.post('/api/v1/datasets/', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return res.data;
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || "Failed to upload dataset");
+  }
+}
+
+export async function listDatasets(page: number = 1, pageSize: number = 20): Promise<DatasetListResponse> {
+  try {
+    const res = await api.get('/api/v1/datasets/', {
+      params: { page, page_size: pageSize },
+    });
+    return res.data;
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || "Failed to list datasets");
+  }
+}
+
+export async function getDataset(uuid: string): Promise<Dataset> {
+  try {
+    const res = await api.get(`/api/v1/datasets/${uuid}`);
+    return res.data;
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || "Failed to get dataset");
+  }
+}
+
+export async function deleteDataset(uuid: string): Promise<void> {
+  try {
+    await api.delete(`/api/v1/datasets/${uuid}`);
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || "Failed to delete dataset");
+  }
+}
+

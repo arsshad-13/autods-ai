@@ -1,4 +1,5 @@
 from typing import Optional
+from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -21,8 +22,8 @@ async def get_user_by_email(db: AsyncSession, email: str) -> Optional[User]:
     return result.scalar_one_or_none()
 
 
-async def get_user_by_uuid(db: AsyncSession, uuid_str: str) -> Optional[User]:
-    stmt = select(User).where(User.uuid == uuid_str)
+async def get_user_by_uuid(db: AsyncSession, user_uuid: UUID) -> Optional[User]:
+    stmt = select(User).where(User.uuid == user_uuid)
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
 

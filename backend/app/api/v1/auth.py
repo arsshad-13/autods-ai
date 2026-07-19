@@ -56,7 +56,13 @@ async def refresh_token(refresh_data: RefreshRequest, db: AsyncSession = Depends
     except JWTError:
         raise credentials_exception
 
-    user = await get_user_by_uuid(db, uuid_str=uuid_str)
+    import uuid
+    try:
+        user_uuid = uuid.UUID(uuid_str)
+    except ValueError:
+        raise credentials_exception
+
+    user = await get_user_by_uuid(db, user_uuid=user_uuid)
     if user is None or not user.is_active:
         raise credentials_exception
 

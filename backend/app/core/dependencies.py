@@ -30,7 +30,13 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
         
-    user = await get_user_by_uuid(db, uuid_str=uuid_str)
+    import uuid
+    try:
+        user_uuid = uuid.UUID(uuid_str)
+    except ValueError:
+        raise credentials_exception
+        
+    user = await get_user_by_uuid(db, user_uuid=user_uuid)
     if user is None:
         raise credentials_exception
     return user

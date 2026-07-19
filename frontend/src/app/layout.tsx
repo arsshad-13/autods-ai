@@ -9,6 +9,7 @@ export const metadata: Metadata = {
   description: 'Autonomous Data Scientist Platform',
 };
 
+import { Toaster } from '@/components/ui/sonner';
 import ProtectedRoute from '@/components/ProtectedRoute';
 
 export default function RootLayout({
@@ -22,7 +23,9 @@ export default function RootLayout({
         <ProtectedRoute>
           {children}
         </ProtectedRoute>
+        <Toaster />
       </body>
     </html>
   );
 }
+
