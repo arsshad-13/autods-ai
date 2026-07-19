@@ -53,7 +53,7 @@ export default function LoginPage() {
       });
       
       login(userResponse.data, access_token, refresh_token);
-      router.push('/profile');
+      router.push('/dashboard');
     } catch (err: any) {
       if (axios.isAxiosError(err) && err.response) {
         setError(err.response.data.detail || 'Failed to login');
