@@ -74,3 +74,6 @@ __pycache__/
 
 backend/storage/uploads/*
 !backend/storage/uploads/.gitkeep
+
+# TypeScript build cache
+*.tsbuildinfo
