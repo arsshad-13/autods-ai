@@ -45,6 +45,8 @@ class Dataset(Base):
 
     # Processing lifecycle — future milestones will advance this
     status = Column(String, nullable=False, default="uploaded")
+    error_message = Column(String, nullable=True)
+
 
     created_at = Column(
         DateTime(timezone=True),
@@ -60,3 +62,12 @@ class Dataset(Base):
 
     # Relationship back to User (for ORM navigation if needed)
     owner = relationship("User", back_populates="datasets")
+
+    # 1-to-1 relationship with DatasetProfile
+    profile = relationship(
+        "DatasetProfile",
+        back_populates="dataset",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+

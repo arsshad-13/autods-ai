@@ -1,0 +1,6 @@
+employee_id,name,department,salary,hire_date,is_active
+101,John Doe,Engineering,85000,2021-03-15,True
+102,Jane Smith,Marketing,62000,2022-01-10,True
+103,Bob Johnson,Engineering,95000,2020-11-01,True
+104,Alice Williams,HR,58000,2023-05-20,False
+105,Charlie Brown,Sales,70000,2021-08-01,True

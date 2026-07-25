@@ -1,3 +1,4 @@
+import uuid
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status
@@ -30,12 +31,11 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
         
-    import uuid
     try:
         user_uuid = uuid.UUID(uuid_str)
     except ValueError:
         raise credentials_exception
-        
+
     user = await get_user_by_uuid(db, user_uuid=user_uuid)
     if user is None:
         raise credentials_exception

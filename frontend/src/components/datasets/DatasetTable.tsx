@@ -11,8 +11,9 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Eye, Trash2, FileSpreadsheet } from 'lucide-react';
+import { Eye, Trash2, FileSpreadsheet, BarChart4, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
+import Link from 'next/link';
 
 interface DatasetTableProps {
   datasets: Dataset[];
@@ -68,12 +69,58 @@ export function DatasetTable({ datasets, onViewDetails, onDelete }: DatasetTable
               <TableCell>{formatBytes(dataset.file_size)}</TableCell>
               <TableCell>{format(new Date(dataset.created_at), 'MMM d, yyyy')}</TableCell>
               <TableCell>
-                <Badge variant={dataset.status === 'uploaded' ? 'default' : 'secondary'}>
-                  {dataset.status}
-                </Badge>
+                {dataset.status === 'completed' && (
+                  <Badge className="bg-emerald-500/15 text-emerald-600 border-emerald-500/20 hover:bg-emerald-500/15 font-medium" variant="outline">
+                    completed
+                  </Badge>
+                )}
+                {(dataset.status === 'profiling' || dataset.status === 'pending') && (
+                  <Badge className="bg-blue-500/15 text-blue-600 border-blue-500/20 animate-pulse hover:bg-blue-500/15 font-medium" variant="outline">
+                    {dataset.status}
+                  </Badge>
+                )}
+                {dataset.status === 'failed' && (
+                  <Badge className="bg-destructive/15 text-destructive border-destructive/20 hover:bg-destructive/15 font-medium" variant="outline">
+                    failed
+                  </Badge>
+                )}
+                {dataset.status === 'uploaded' && (
+                  <Badge className="bg-muted text-muted-foreground hover:bg-muted font-medium" variant="outline">
+                    uploaded
+                  </Badge>
+                )}
               </TableCell>
               <TableCell className="text-right">
                 <div className="flex justify-end space-x-2">
+                  <Button
+                    asChild
+                    variant="ghost"
+                    size="icon"
+                    title={
+                      dataset.status === 'completed'
+                        ? 'View Profile Analysis'
+                        : dataset.status === 'profiling' || dataset.status === 'pending'
+                        ? 'Analysis in Progress'
+                        : 'Analyze Dataset'
+                    }
+                    className={
+                      dataset.status === 'completed'
+                        ? 'text-primary hover:text-primary hover:bg-primary/10'
+                        : dataset.status === 'failed'
+                        ? 'text-destructive hover:text-destructive'
+                        : 'text-muted-foreground'
+                    }
+                    disabled={dataset.status === 'profiling' || dataset.status === 'pending'}
+                  >
+                    <Link href={`/datasets/${dataset.uuid}/profile`}>
+                      {dataset.status === 'profiling' || dataset.status === 'pending' ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <BarChart4 className="h-4 w-4" />
+                      )}
+                    </Link>
+                  </Button>
+
                   <Button
                     variant="ghost"
                     size="icon"

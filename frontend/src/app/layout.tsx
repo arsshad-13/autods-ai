@@ -11,6 +11,7 @@ export const metadata: Metadata = {
 
 import { Toaster } from '@/components/ui/sonner';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import ToastDismissOnNavigate from '@/components/ToastDismissOnNavigate';
 
 export default function RootLayout({
   children,
@@ -23,9 +24,11 @@ export default function RootLayout({
         <ProtectedRoute>
           {children}
         </ProtectedRoute>
+        <ToastDismissOnNavigate />
         <Toaster />
       </body>
     </html>
+
   );
 }
 

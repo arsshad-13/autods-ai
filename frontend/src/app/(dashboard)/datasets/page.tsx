@@ -44,15 +44,35 @@ export default function DatasetsPage() {
     }
   }, [pageSize]);
 
+  // Dismiss all stale toasts immediately when this page mounts to prevent cross-page leakage
+  useEffect(() => {
+    toast.dismiss();
+  }, []);
+
   useEffect(() => {
     fetchDatasets(page);
   }, [page, fetchDatasets]);
+
+  // Re-fetch silently when the user returns to this tab/page (e.g. navigating back from
+  // the profile page) so the status badge always reflects the latest backend state.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchDatasets(page);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [page, fetchDatasets]);
+
 
   const handleUpload = async (file: File) => {
     setIsUploading(true);
     try {
       await uploadDataset(file);
-      toast.success('Dataset uploaded successfully');
+      toast.success('Dataset uploaded successfully', { duration: 2500 });
       if (page === 1) {
         await fetchDatasets(1);
       } else {

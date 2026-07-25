@@ -14,8 +14,10 @@ class DatasetResponse(BaseModel):
     mime_type: str
     extension: str
     status: str
+    error_message: str | None = None
     created_at: datetime
     updated_at: datetime
+
 
     model_config = ConfigDict(from_attributes=True)
 

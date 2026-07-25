@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { useAuthStore } from './store';
-import { HealthResponse, Dataset, DatasetListResponse } from '@/types/api';
+import { HealthResponse, Dataset, DatasetListResponse, DatasetProfile } from '@/types/api';
 
 export class ApiError extends Error {
   constructor(message: string) {
@@ -101,6 +101,11 @@ export async function listDatasets(page: number = 1, pageSize: number = 20): Pro
   try {
     const res = await api.get('/api/v1/datasets/', {
       params: { page, page_size: pageSize },
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      }
     });
     return res.data;
   } catch (error: any) {
@@ -110,7 +115,13 @@ export async function listDatasets(page: number = 1, pageSize: number = 20): Pro
 
 export async function getDataset(uuid: string): Promise<Dataset> {
   try {
-    const res = await api.get(`/api/v1/datasets/${uuid}`);
+    const res = await api.get(`/api/v1/datasets/${uuid}`, {
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      }
+    });
     return res.data;
   } catch (error: any) {
     throw new ApiError(error.response?.data?.detail || "Failed to get dataset");
@@ -124,4 +135,29 @@ export async function deleteDataset(uuid: string): Promise<void> {
     throw new ApiError(error.response?.data?.detail || "Failed to delete dataset");
   }
 }
+
+export async function getDatasetProfile(uuid: string): Promise<DatasetProfile> {
+  try {
+    const res = await api.get(`/api/v1/datasets/${uuid}/profile`, {
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      }
+    });
+    return res.data;
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || "Failed to retrieve dataset profile");
+  }
+}
+
+export async function generateDatasetProfile(uuid: string): Promise<Dataset> {
+  try {
+    const res = await api.post(`/api/v1/datasets/${uuid}/profile`);
+    return res.data;
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || "Failed to trigger dataset analysis");
+  }
+}
+
 

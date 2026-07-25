@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { format } from 'date-fns';
+import Link from 'next/link';
 
 interface DatasetDetailDrawerProps {
   dataset: Dataset | null;
@@ -45,9 +46,26 @@ export function DatasetDetailDrawer({ dataset, isOpen, onClose }: DatasetDetailD
           <div className="p-4 pb-0 space-y-4">
             <div className="flex justify-between items-center">
               <span className="text-sm text-muted-foreground">Status</span>
-              <Badge variant={dataset.status === 'uploaded' ? 'default' : 'secondary'}>
-                {dataset.status}
-              </Badge>
+              {dataset.status === 'completed' && (
+                <Badge className="bg-emerald-500/15 text-emerald-600 border-emerald-500/20 hover:bg-emerald-500/15 font-medium" variant="outline">
+                  completed
+                </Badge>
+              )}
+              {(dataset.status === 'profiling' || dataset.status === 'pending') && (
+                <Badge className="bg-blue-500/15 text-blue-600 border-blue-500/20 animate-pulse hover:bg-blue-500/15 font-medium" variant="outline">
+                  {dataset.status}
+                </Badge>
+              )}
+              {dataset.status === 'failed' && (
+                <Badge className="bg-destructive/15 text-destructive border-destructive/20 hover:bg-destructive/15 font-medium" variant="outline">
+                  failed
+                </Badge>
+              )}
+              {dataset.status === 'uploaded' && (
+                <Badge className="bg-muted text-muted-foreground hover:bg-muted font-medium" variant="outline">
+                  uploaded
+                </Badge>
+              )}
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-muted-foreground">Size</span>
@@ -76,9 +94,14 @@ export function DatasetDetailDrawer({ dataset, isOpen, onClose }: DatasetDetailD
               </span>
             </div>
           </div>
-          <DrawerFooter>
+          <DrawerFooter className="flex flex-col gap-2 pt-4">
+            <Button asChild className="w-full" onClick={onClose}>
+              <Link href={`/datasets/${dataset.uuid}/profile`}>
+                View Dataset Profile
+              </Link>
+            </Button>
             <DrawerClose asChild>
-              <Button variant="outline">Close</Button>
+              <Button variant="outline" className="w-full">Close</Button>
             </DrawerClose>
           </DrawerFooter>
         </div>
