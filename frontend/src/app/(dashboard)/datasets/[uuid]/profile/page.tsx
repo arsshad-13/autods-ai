@@ -101,11 +101,9 @@ export default function DatasetProfilePage() {
 
     const status = dataset.status;
     if (status !== 'pending' && status !== 'profiling') {
-      setIsProfiling(false);
       return;
     }
 
-    setIsProfiling(true);
     let active = true;
 
     const poll = async () => {
@@ -120,11 +118,15 @@ export default function DatasetProfilePage() {
           setProfile(prof);
           setIsProfiling(false);
           toast.dismiss();
-          toast.success('Dataset analyzed successfully.');
+          toast.success('Dataset analyzed successfully.', {
+            className: 'bg-emerald-600 text-white font-medium border-emerald-700'
+          });
         } else if (ds.status === 'failed') {
           setIsProfiling(false);
           toast.dismiss();
-          toast.error('Dataset analysis failed.');
+          toast.error('Dataset analysis failed.', {
+            className: 'bg-destructive text-destructive-foreground font-medium border-destructive'
+          });
         }
       } catch (err) {
         console.error("Error polling profiling status:", err);
@@ -147,9 +149,27 @@ export default function DatasetProfilePage() {
     try {
       const updatedDs = await generateDatasetProfile(uuid);
       setDataset(updatedDs);
-      toast.success('Dataset analysis started.');
+      if (updatedDs.status === 'completed') {
+        const prof = await getDatasetProfile(uuid);
+        setProfile(prof);
+        setIsProfiling(false);
+        toast.success('Dataset analyzed successfully.', {
+          className: 'bg-emerald-600 text-white font-medium border-emerald-700'
+        });
+      } else if (updatedDs.status === 'failed') {
+        setIsProfiling(false);
+        toast.error('Dataset analysis failed.', {
+          className: 'bg-destructive text-destructive-foreground font-medium border-destructive'
+        });
+      } else {
+        toast.success('Dataset analysis started.', {
+          className: 'bg-emerald-600 text-white font-medium border-emerald-700'
+        });
+      }
     } catch (err: any) {
-      toast.error(err.message || 'Failed to start analysis');
+      toast.error(err.message || 'Failed to start analysis', {
+        className: 'bg-destructive text-destructive-foreground font-medium border-destructive'
+      });
       setIsProfiling(false);
     }
   };
@@ -212,6 +232,12 @@ export default function DatasetProfilePage() {
     );
   }
 
+  // Mutually exclusive UI states
+  const isFailed = dataset?.status === 'failed';
+  const isCurrentlyProfiling = isProfiling || dataset?.status === 'pending' || dataset?.status === 'profiling';
+  const isCompleted = dataset?.status === 'completed' && profile !== null;
+  const isUploaded = !isFailed && !isCurrentlyProfiling && !isCompleted;
+
   return (
     <div className="flex-1 space-y-6 p-8 pt-6">
       {/* Top Breadcrumb & Action Row */}
@@ -231,18 +257,18 @@ export default function DatasetProfilePage() {
           </div>
         </div>
 
-        {dataset && (
+        {dataset && !isFailed && (
           <Button
             onClick={handleAnalyze}
             className="gap-2"
-            disabled={isProfiling || dataset.status === 'pending' || dataset.status === 'profiling'}
+            disabled={isCurrentlyProfiling}
           >
-            {isProfiling || dataset.status === 'pending' || dataset.status === 'profiling' ? (
+            {isCurrentlyProfiling ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <RefreshCw className="h-4 w-4" />
             )}
-            {isProfiling || dataset.status === 'pending' || dataset.status === 'profiling'
+            {isCurrentlyProfiling
               ? 'Analyzing Dataset...'
               : profile
               ? 'Re-analyze Dataset'
@@ -252,7 +278,7 @@ export default function DatasetProfilePage() {
       </div>
 
       {/* 1. Asynchronous Profiling Loading State */}
-      {isProfiling && (
+      {isCurrentlyProfiling && (
         <Card className="border-primary/20 bg-primary/5 overflow-hidden">
           <CardHeader className="text-center py-10 space-y-4">
             <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
@@ -273,7 +299,7 @@ export default function DatasetProfilePage() {
       )}
 
       {/* 2. Profiling Failed State */}
-      {dataset?.status === 'failed' && !isProfiling && (
+      {isFailed && !isCurrentlyProfiling && (
         <Card className="border-destructive/30 bg-destructive/5 max-w-2xl mx-auto my-8">
           <CardContent className="flex flex-col items-center justify-center p-12 text-center">
             <AlertTriangle className="h-12 w-12 text-destructive mb-4" />
@@ -309,7 +335,7 @@ export default function DatasetProfilePage() {
       )}
 
       {/* 3. Initial state - Ask User to Analyze (Empty State UI) */}
-      {!profile && !isProfiling && dataset?.status !== 'failed' && (
+      {isUploaded && (
         <Card className="border-dashed max-w-2xl mx-auto my-8">
           <CardContent className="flex flex-col items-center justify-center p-12 text-center">
             <div className="rounded-full bg-primary/10 p-4 mb-4">
@@ -344,7 +370,7 @@ export default function DatasetProfilePage() {
       )}
 
       {/* 4. Complete Profile Details Dashboard */}
-      {profile && dataset?.status === 'completed' && !isProfiling && (
+      {isCompleted && !isCurrentlyProfiling && (
         <div className="space-y-6">
           {/* Quick Summary Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">

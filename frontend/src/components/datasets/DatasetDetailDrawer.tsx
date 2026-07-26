@@ -93,13 +93,42 @@ export function DatasetDetailDrawer({ dataset, isOpen, onClose }: DatasetDetailD
                 {dataset.uuid}
               </span>
             </div>
+            {dataset.status === 'failed' && dataset.error_message && (
+              <div className="flex flex-col gap-1 mt-2">
+                <span className="text-sm text-destructive font-medium">Error Details</span>
+                <span className="text-xs text-muted-foreground bg-destructive/10 p-2 rounded-md border border-destructive/20">
+                  {dataset.error_message}
+                </span>
+              </div>
+            )}
           </div>
           <DrawerFooter className="flex flex-col gap-2 pt-4">
-            <Button asChild className="w-full" onClick={onClose}>
-              <Link href={`/datasets/${dataset.uuid}/profile`}>
-                View Dataset Profile
-              </Link>
-            </Button>
+            {dataset.status === 'completed' && (
+              <Button asChild className="w-full" onClick={onClose}>
+                <Link href={`/datasets/${dataset.uuid}/profile`}>
+                  View Dataset Profile
+                </Link>
+              </Button>
+            )}
+            {dataset.status === 'uploaded' && (
+              <Button asChild className="w-full" onClick={onClose}>
+                <Link href={`/datasets/${dataset.uuid}/profile`}>
+                  Analyze Dataset
+                </Link>
+              </Button>
+            )}
+            {(dataset.status === 'pending' || dataset.status === 'profiling') && (
+              <Button disabled className="w-full">
+                Analyzing...
+              </Button>
+            )}
+            {dataset.status === 'failed' && (
+              <Button asChild variant="destructive" className="w-full" onClick={onClose}>
+                <Link href={`/datasets/${dataset.uuid}/profile`}>
+                  Analyze Again
+                </Link>
+              </Button>
+            )}
             <DrawerClose asChild>
               <Button variant="outline" className="w-full">Close</Button>
             </DrawerClose>

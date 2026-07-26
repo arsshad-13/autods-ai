@@ -177,19 +177,56 @@ class MlRecommendationEngine:
         confidence = max(10.0, min(99.0, float((raw_score + 1.0) / 2.2 * 100.0)))
         has_reliable_target = raw_score > 0.0
 
-        has_datetime = len(datetime_cols) > 0
-        recommended_task = "Classification"
+        is_forecasting = False
+        if len(datetime_cols) == 1 and len(numeric_cols) >= 1:
+            dt_col = datetime_cols[0]
+            dt_series = df[dt_col].dropna()
+            
+            if not dt_series.empty:
+                is_unique = (dt_series.nunique() == len(dt_series))
+                if is_unique:
+                    try:
+                        is_sorted = dt_series.is_monotonic_increasing
+                    except Exception:
+                        is_sorted = False
+                        
+                    if is_sorted:
+                        is_forecasting = True
 
-        if has_reliable_target:
+        heuristic_score = 0.0
+        if len(datetime_cols) > 0:
+            heuristic_score += 40.0
+        if len(numeric_cols) > 0:
+            heuristic_score += 25.0
+            
+        dt_is_unique = False
+        for col in datetime_cols:
+            s = df[col].dropna()
+            if not s.empty and s.nunique() == len(s):
+                dt_is_unique = True
+                break
+        if dt_is_unique:
+            heuristic_score += 15.0
+            
+        if len(numeric_cols) == 1:
+            heuristic_score += 10.0
+            
+        if df.isna().sum().sum() == 0:
+            heuristic_score += 5.0
+            
+        if df.duplicated().sum() == 0:
+            heuristic_score += 5.0
+
+        heuristic_confidence = max(0.0, min(100.0, float(heuristic_score)))
+
+        if is_forecasting:
+            recommended_task = "Forecasting"
+            best_col = numeric_cols[0]
+            confidence = heuristic_confidence
+        elif has_reliable_target:
             target_series = df[best_col].dropna()
             nunique_target = target_series.nunique()
-
-            # Date check + numeric sales/demand/price keyword -> Time Series
-            time_series_keywords = ["price", "demand", "sales", "revenue", "count", "amount", "temp", "temperature"]
-            if has_datetime and any(x in best_col.lower() for x in time_series_keywords):
-                recommended_task = "Time Series"
-            elif pd.api.types.is_numeric_dtype(df[best_col]):
-                # Discrete numeric classes vs continuous numeric target
+            if pd.api.types.is_numeric_dtype(df[best_col]):
                 if nunique_target <= 15 or (nunique_target < 0.05 * len(df) and nunique_target < 50):
                     recommended_task = "Classification"
                 else:
@@ -199,23 +236,31 @@ class MlRecommendationEngine:
             else:
                 recommended_task = "Classification"
         else:
-            # Unsupervised
-            if has_datetime:
-                recommended_task = "Time Series"
-            else:
-                recommended_task = "Clustering"
+            recommended_task = "Unsupervised"
             best_col = None
-            confidence = 0.0
+            confidence = heuristic_confidence
+
+        reasons = []
+        if recommended_task == "Forecasting":
+            reasons.append("Detected a datetime index and numeric measurement suitable for time series forecasting.")
+            if best_col:
+                reasons.append(f"Target column '{best_col}' identified with confidence score of {confidence:.1f}%.")
+        elif recommended_task == "Regression":
+            reasons.append("Recommended task is 'Regression' because a continuous numeric target was detected.")
+            if best_col:
+                reasons.append(f"Target column '{best_col}' identified with confidence score of {confidence:.1f}%.")
+        elif recommended_task == "Classification":
+            reasons.append("Recommended task is 'Classification' because a categorical or discrete target was detected.")
+            if best_col:
+                reasons.append(f"Target column '{best_col}' identified with confidence score of {confidence:.1f}%.")
+        elif recommended_task == "Unsupervised":
+            reasons.append("Recommended task is 'Unsupervised' because no obvious supervised target was identified; clustering or dimensionality reduction is appropriate.")
 
         explanation = {
             "inferred_target": best_col,
             "confidence": confidence,
             "recommended_task": recommended_task,
-            "reasons": [
-                f"Recommended task is '{recommended_task}' based on column characteristics.",
-                f"Target column '{best_col}' identified with confidence score of {confidence:.1f}%."
-                if best_col else "No obvious target column identified; clustering recommended."
-            ],
+            "reasons": reasons,
         }
 
         return recommended_task, best_col, confidence, explanation
@@ -566,8 +611,9 @@ async def profile_dataset(dataset_id: int, file_path: str, db: AsyncSession) -> 
         logger.exception("Failed to generate profile for dataset_id=%s", dataset_id)
         
         # Determine user-friendly error message
-        error_msg = "An unexpected error occurred during profiling."
+        err_type = type(e).__name__
         err_str = str(e)
+        error_msg = "An unexpected error occurred during profiling."
         
         if isinstance(e, FileNotFoundError) or "file not found" in err_str.lower():
             error_msg = "Dataset file not found."
@@ -575,25 +621,29 @@ async def profile_dataset(dataset_id: int, file_path: str, db: AsyncSession) -> 
             error_msg = "Excel engine (openpyxl) is missing."
         elif "xlrd" in err_str.lower():
             error_msg = "Excel engine (xlrd) is missing."
-        elif "unicodedecodeerror" in type(e).__name__.lower() or "codec" in err_str.lower():
-            error_msg = "Unsupported file encoding."
-        elif "parsererror" in type(e).__name__.lower() or "parser" in err_str.lower() or "empty_col" in err_str.lower():
-            error_msg = "Pandas failed to parse the uploaded dataset."
-        elif "zipfile.badzipfile" in type(e).__name__.lower() or "invalidfileexception" in type(e).__name__.lower() or "xlsx" in err_str.lower() or "excel" in err_str.lower():
-            error_msg = "Unable to read Excel workbook."
-
-        # If analyze_csv raised a custom ValueError containing one of the friendly strings, we use it directly
-        for friendly_candidate in [
-            "Excel engine (openpyxl) is missing.",
-            "Excel engine (xlrd) is missing.",
-            "Unsupported file encoding.",
-            "Pandas failed to parse the uploaded dataset.",
-            "Unable to read Excel workbook.",
-            "Dataset file not found."
-        ]:
-            if friendly_candidate in err_str:
-                error_msg = friendly_candidate
-                break
+        elif "UnicodeDecodeError" in err_type or "codec" in err_str.lower():
+            error_msg = f"UnicodeDecodeError: {err_str}"
+        elif "ParserError" in err_type or "empty_col" in err_str.lower():
+            error_msg = f"ParserError: {err_str}"
+        elif "ValueError" in err_type and "Worksheet" in err_str:
+            error_msg = err_str # e.g. "Worksheet named 'Sheet1' not found"
+        elif "BadZipFile" in err_type or "InvalidFileException" in err_type or "xlsx" in err_str.lower() or "excel" in err_str.lower():
+            error_msg = "ExcelError: Unable to read Excel workbook. The file may be corrupted."
+        elif "ValueError" in err_type:
+            error_msg = f"ValueError: {err_str}"
+        else:
+            # If analyze_csv raised a custom ValueError containing one of the friendly strings, use it
+            for friendly_candidate in [
+                "Excel engine (openpyxl) is missing.",
+                "Excel engine (xlrd) is missing.",
+                "Unsupported file encoding.",
+                "Pandas failed to parse the uploaded dataset.",
+                "Unable to read Excel workbook.",
+                "Dataset file not found."
+            ]:
+                if friendly_candidate in err_str:
+                    error_msg = friendly_candidate
+                    break
 
         # Update dataset status to 'failed' and write error message
         await db.execute(
