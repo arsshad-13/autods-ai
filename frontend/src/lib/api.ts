@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { useAuthStore } from './store';
-import { HealthResponse, Dataset, DatasetListResponse, DatasetProfile } from '@/types/api';
+import { HealthResponse, Dataset, DatasetListResponse, DatasetProfile, DatasetPreprocessingResponse } from '@/types/api';
 
 export class ApiError extends Error {
   constructor(message: string) {
@@ -160,4 +160,67 @@ export async function generateDatasetProfile(uuid: string): Promise<Dataset> {
   }
 }
 
+// Preprocessing APIs
+export async function getPreprocessingPlan(uuid: string): Promise<DatasetPreprocessingResponse> {
+  try {
+    const res = await api.get(`/api/v1/datasets/${uuid}/preprocess/plan`, {
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      }
+    });
+    return res.data;
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || "Failed to retrieve preprocessing plan");
+  }
+}
 
+export async function generatePreprocessingPlan(uuid: string): Promise<DatasetPreprocessingResponse> {
+  try {
+    const res = await api.post(`/api/v1/datasets/${uuid}/preprocess/plan`);
+    return res.data;
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || "Failed to generate preprocessing plan");
+  }
+}
+
+export async function applyPreprocessingPlan(uuid: string, selectedActions: string[]): Promise<DatasetPreprocessingResponse> {
+  try {
+    const res = await api.post(`/api/v1/datasets/${uuid}/preprocess/apply`, {
+      selected_actions: selectedActions
+    });
+    return res.data;
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || "Failed to apply preprocessing");
+  }
+}
+
+export async function downloadCleanedDataset(uuid: string): Promise<void> {
+  try {
+    const res = await api.get(`/api/v1/datasets/${uuid}/preprocess/download`, {
+      responseType: 'blob',
+    });
+    
+    let filename = `cleaned_dataset.csv`;
+    const disposition = res.headers['content-disposition'];
+    if (disposition && disposition.indexOf('attachment') !== -1) {
+      const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+      const matches = filenameRegex.exec(disposition);
+      if (matches != null && matches[1]) { 
+        filename = matches[1].replace(/['"]/g, '');
+      }
+    }
+    
+    const url = window.URL.createObjectURL(new Blob([res.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.parentNode?.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || "Failed to download dataset");
+  }
+}

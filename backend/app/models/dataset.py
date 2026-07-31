@@ -70,4 +70,11 @@ class Dataset(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
-
+    
+    # 1-to-1 relationship with DatasetPreprocessing
+    preprocessing = relationship(
+        "DatasetPreprocessing",
+        back_populates="dataset",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )

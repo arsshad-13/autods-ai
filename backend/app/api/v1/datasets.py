@@ -198,3 +198,104 @@ async def get_dataset_profile(
         )
 
     return DatasetProfileResponse.model_validate(profile)
+
+
+from app.schemas.dataset_preprocessing import DatasetPreprocessingResponse, ApplyPreprocessingRequest
+from app.services import preprocessing_service
+from fastapi.responses import FileResponse
+from pathlib import Path
+
+
+@router.post(
+    "/{dataset_uuid}/preprocess/plan",
+    response_model=DatasetPreprocessingResponse,
+    summary="Generate a preprocessing plan",
+)
+async def generate_preprocessing_plan(
+    dataset_uuid: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> DatasetPreprocessingResponse:
+    """
+    Generate preprocessing recommendations based on dataset profile.
+    """
+    plan = await preprocessing_service.generate_preprocessing_plan(
+        dataset_uuid=dataset_uuid,
+        user_id=current_user.id,
+        db=db,
+    )
+    return DatasetPreprocessingResponse.model_validate(plan)
+
+
+@router.get(
+    "/{dataset_uuid}/preprocess/plan",
+    response_model=DatasetPreprocessingResponse,
+    summary="Get preprocessing plan",
+)
+async def get_preprocessing_plan(
+    dataset_uuid: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> DatasetPreprocessingResponse:
+    """
+    Get the existing preprocessing plan for a dataset.
+    """
+    plan = await preprocessing_service.get_preprocessing_plan(
+        dataset_uuid=dataset_uuid,
+        user_id=current_user.id,
+        db=db,
+    )
+    if not plan:
+        raise HTTPException(status_code=404, detail="Preprocessing plan not found.")
+    return DatasetPreprocessingResponse.model_validate(plan)
+
+
+@router.post(
+    "/{dataset_uuid}/preprocess/apply",
+    response_model=DatasetPreprocessingResponse,
+    summary="Apply preprocessing actions",
+)
+async def apply_preprocessing_plan(
+    dataset_uuid: UUID,
+    request: ApplyPreprocessingRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> DatasetPreprocessingResponse:
+    """
+    Apply user-selected preprocessing actions and create a versioned clean dataset.
+    """
+    plan = await preprocessing_service.apply_preprocessing_plan(
+        dataset_uuid=dataset_uuid,
+        user_id=current_user.id,
+        selected_actions=request.selected_actions,
+        db=db,
+    )
+    return DatasetPreprocessingResponse.model_validate(plan)
+
+
+@router.get(
+    "/{dataset_uuid}/preprocess/download",
+    summary="Download cleaned dataset",
+)
+async def download_cleaned_dataset(
+    dataset_uuid: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Download the latest cleaned dataset.
+    """
+    plan = await preprocessing_service.get_preprocessing_plan(
+        dataset_uuid=dataset_uuid,
+        user_id=current_user.id,
+        db=db,
+    )
+    if not plan or not plan.clean_dataset_path or not Path(plan.clean_dataset_path).exists():
+        raise HTTPException(status_code=404, detail="Cleaned dataset not found.")
+        
+    return FileResponse(
+        path=plan.clean_dataset_path,
+        filename=Path(plan.clean_dataset_path).name,
+        media_type="application/octet-stream"
+    )
+

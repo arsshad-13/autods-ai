@@ -258,22 +258,35 @@ export default function DatasetProfilePage() {
         </div>
 
         {dataset && !isFailed && (
-          <Button
-            onClick={handleAnalyze}
-            className="gap-2"
-            disabled={isCurrentlyProfiling}
-          >
-            {isCurrentlyProfiling ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
+          <div className="flex gap-2">
+            {profile && (
+              <Button
+                onClick={() => router.push(`/datasets/${uuid}/preprocess`)}
+                variant="default"
+                className="gap-2 bg-indigo-600 hover:bg-indigo-700"
+              >
+                <Sparkles className="h-4 w-4" />
+                Preprocess Data
+              </Button>
             )}
-            {isCurrentlyProfiling
-              ? 'Analyzing Dataset...'
-              : profile
-              ? 'Re-analyze Dataset'
-              : 'Analyze Dataset'}
-          </Button>
+            <Button
+              onClick={handleAnalyze}
+              variant={profile ? "outline" : "default"}
+              className="gap-2"
+              disabled={isCurrentlyProfiling}
+            >
+              {isCurrentlyProfiling ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {isCurrentlyProfiling
+                ? 'Analyzing Dataset...'
+                : profile
+                ? 'Re-analyze'
+                : 'Analyze'}
+            </Button>
+          </div>
         )}
       </div>
 

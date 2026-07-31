@@ -122,4 +122,31 @@ export interface DatasetProfile {
   updated_at: string;
 }
 
+export interface RecommendationSchema {
+  id: string;
+  action: string;
+  recommendation: string;
+  reason: string;
+  affected_columns: string[];
+  estimated_impact: string;
+}
 
+export interface DatasetPreprocessingResponse {
+  uuid: string;
+  dataset_id: number;
+  recommendations?: RecommendationSchema[];
+  actions_applied?: RecommendationSchema[];
+  processing_summary?: {
+    messages?: string[];
+    quality_before?: number;
+    quality_after?: number;
+  };
+  clean_dataset_path?: string;
+  quality_before?: number | Record<string, any>;
+  quality_after?: number | Record<string, any>;
+  processing_time?: number;
+  status: 'NOT_GENERATED' | 'PLAN_GENERATED' | 'APPLYING' | 'COMPLETED' | 'FAILED';
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+}
