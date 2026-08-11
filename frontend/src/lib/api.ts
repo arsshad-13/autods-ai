@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { useAuthStore } from './store';
-import { HealthResponse, Dataset, DatasetListResponse, DatasetProfile, DatasetPreprocessingResponse } from '@/types/api';
+import { HealthResponse, Dataset, DatasetListResponse, DatasetProfile, DatasetPreprocessingResponse, ModelTrainingStartResponse, ModelTrainingStatusResponse, TrainedModel } from '@/types/api';
 
 export class ApiError extends Error {
   constructor(message: string) {
@@ -222,5 +222,75 @@ export async function downloadCleanedDataset(uuid: string): Promise<void> {
     window.URL.revokeObjectURL(url);
   } catch (error: any) {
     throw new ApiError(error.response?.data?.detail || "Failed to download dataset");
+  }
+}
+
+// Model Training APIs
+export async function trainModels(uuid: string): Promise<ModelTrainingStatusResponse> {
+  try {
+    const res = await api.post(`/api/v1/datasets/${uuid}/models/train`);
+    return res.data;
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || 'Failed to start model training');
+  }
+}
+
+export async function getTrainingStatus(uuid: string): Promise<ModelTrainingStatusResponse> {
+  try {
+    const res = await api.get(`/api/v1/datasets/${uuid}/models/status`, {
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      },
+    });
+    return res.data;
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || 'Failed to retrieve training status');
+  }
+}
+
+export async function getTrainedModels(uuid: string): Promise<TrainedModel[]> {
+  try {
+    const res = await api.get(`/api/v1/datasets/${uuid}/models`, {
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      }
+    });
+    return res.data;
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || "Failed to retrieve trained models");
+  }
+}
+
+export async function getBestModel(uuid: string): Promise<TrainedModel> {
+  try {
+    const res = await api.get(`/api/v1/datasets/${uuid}/models/best`, {
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      }
+    });
+    return res.data;
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || "Failed to retrieve the best model");
+  }
+}
+
+export async function getModelDetails(datasetUuid: string, modelUuid: string): Promise<TrainedModel> {
+  try {
+    const res = await api.get(`/api/v1/datasets/${datasetUuid}/models/${modelUuid}`, {
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      }
+    });
+    return res.data;
+  } catch (error: any) {
+    throw new ApiError(error.response?.data?.detail || "Failed to retrieve model details");
   }
 }

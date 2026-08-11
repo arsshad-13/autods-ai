@@ -23,6 +23,32 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(f"Starting up {settings.APP_NAME}...")
+    
+    # -----------------------------------------------------------------------
+    # Recover stale background training jobs that were interrupted by restart
+    # -----------------------------------------------------------------------
+    from sqlalchemy import update
+    from app.database import AsyncSessionLocal
+    from app.models.trained_model import TrainedModel
+    
+    try:
+        async with AsyncSessionLocal() as db:
+            stmt = (
+                update(TrainedModel)
+                .where(TrainedModel.status.in_(["PENDING", "RUNNING"]))
+                .values(
+                    status="FAILED",
+                    error_message="Training interrupted by server restart"
+                )
+                .execution_options(synchronize_session=False)
+            )
+            result = await db.execute(stmt)
+            await db.commit()
+            if result.rowcount > 0:
+                logger.info(f"Recovered {result.rowcount} interrupted model training record(s).")
+    except Exception as e:
+        logger.exception("Failed to recover stale model training records on startup. Continuing startup...")
+        
     yield
     logger.info(f"Shutting down {settings.APP_NAME}...")
 

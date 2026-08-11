@@ -47,6 +47,11 @@ async def generate_preprocessing_plan(
     recommendations: list[dict[str, Any]] = []
     columns_summary = profile.profile_data.get("columns", {})
 
+    # Resolve total row count from the general profile section.
+    # The per-column stats do NOT include a "total_count" key; it lives at
+    # profile_data["general"]["row_count"] which is always populated by the profiler.
+    total_count = profile.profile_data.get("general", {}).get("row_count", 0)
+
     # Find missing values
     missing_num = []
     missing_cat = []
@@ -54,7 +59,6 @@ async def generate_preprocessing_plan(
     
     for col_name, stats in columns_summary.items():
         missing_count = stats.get("missing_count", 0)
-        total_count = stats.get("total_count", 0)
         
         if missing_count > 0:
             if missing_count == total_count:
@@ -111,9 +115,11 @@ async def generate_preprocessing_plan(
     for col_name, stats in columns_summary.items():
         lower_name = col_name.lower()
         if "id" in lower_name or "uuid" in lower_name or "index" in lower_name:
-            # Check cardinality if high enough to be an ID
-            if stats.get("type") in ["numeric", "categorical"] and stats.get("unique_count", 0) > 0:
-                 if stats.get("unique_count") / max(1, stats.get("total_count", 1)) > 0.9:
+            # Check cardinality if high enough to be an ID.
+            # Use "cardinality" (unique count) from the profile and total_count from general.
+            cardinality = stats.get("cardinality", 0)
+            if stats.get("type") in ["numeric", "categorical"] and cardinality > 0:
+                 if cardinality / max(1, total_count) > 0.9:
                      id_cols.append(col_name)
                      
     if id_cols:
@@ -159,7 +165,9 @@ async def generate_preprocessing_plan(
             "estimated_impact": "Medium"
         })
 
-    # Scaling
+    # Scaling — Recommendation kept for UI display, but execution is intentionally
+    # disabled in apply_preprocessing_plan(). StandardScaler is now applied inside
+    # the leakage-free sklearn training Pipeline (fitted on X_train only).
     numeric_cols = [
         c for c, s in columns_summary.items() 
         if s.get("type") == "numeric" and c not in id_cols and c not in empty_cols
@@ -168,8 +176,8 @@ async def generate_preprocessing_plan(
         recommendations.append({
             "id": "scale_numeric",
             "action": "standard_scaler",
-            "recommendation": "StandardScaler",
-            "reason": "Numeric features suitable for standardization.",
+            "recommendation": "StandardScaler (applied during model training)",
+            "reason": "Numeric feature standardization is applied inside the leakage-free training Pipeline.",
             "affected_columns": numeric_cols,
             "estimated_impact": "Medium"
         })
@@ -339,15 +347,20 @@ async def apply_preprocessing_plan(
                 summary_messages.append(f"Applied One Hot Encoding to {len(cols_to_encode)} columns.")
                 actions_applied.append(rec)
                 
-            # StandardScaler
+            # StandardScaler — DISABLED: Scaling is now applied exclusively inside the
+            # leakage-free sklearn training Pipeline (fitted only on X_train).
+            # This block is intentionally a no-op to prevent fitting statistics on the
+            # full dataset before train/test splitting.
             elif action == "standard_scaler":
-                cols_to_scale = [c for c in cols if c in df.columns]
-                for c in cols_to_scale:
-                    mean = df[c].mean()
-                    std = df[c].std()
-                    if std > 0:
-                        df[c] = (df[c] - mean) / std
-                summary_messages.append(f"Applied Standard Scaling to {len(cols_to_scale)} columns.")
+                logger.info(
+                    "StandardScaler preprocessing action skipped for dataset %s. "
+                    "Scaling is handled inside the model training Pipeline on training data only.",
+                    dataset_uuid,
+                )
+                summary_messages.append(
+                    "StandardScaler skipped in preprocessing — scaling is applied inside "
+                    "the model training Pipeline to prevent data leakage."
+                )
                 actions_applied.append(rec)
                 
             # Datetime Expansion
@@ -359,8 +372,13 @@ async def apply_preprocessing_plan(
                     df[f"{c}_month"] = dt_series.dt.month
                     df[f"{c}_day"] = dt_series.dt.day
                     df[f"{c}_weekday"] = dt_series.dt.weekday
-                    df.drop(columns=[c], inplace=True)
-                summary_messages.append(f"Extracted datetime features from {len(cols_to_expand)} columns.")
+                    df[f"{c}_quarter"] = dt_series.dt.quarter
+                    # IMPORTANT: Do NOT drop the original datetime column.
+                    # The training service requires it to:
+                    #   1. Sort the dataset chronologically.
+                    #   2. Generate lag and rolling-window features.
+                    #   3. Identify the forecasting timeline.
+                summary_messages.append(f"Extracted datetime features from {len(cols_to_expand)} columns (original datetime column preserved).")
                 actions_applied.append(rec)
 
         # Save versioned dataset

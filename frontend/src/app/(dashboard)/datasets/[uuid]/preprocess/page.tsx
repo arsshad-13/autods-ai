@@ -165,6 +165,18 @@ export default function PreprocessPage({ params }: { params: Promise<{ uuid: str
               )}
             </Button>
           )}
+
+          {isCompleted && (
+            <Button 
+              onClick={() => router.push(`/datasets/${uuid}/models`)}
+              className="bg-indigo-600 hover:bg-indigo-700"
+            >
+              <span className="flex items-center gap-2">
+                Proceed to Model Training
+                <ArrowLeft className="w-4 h-4 rotate-180" />
+              </span>
+            </Button>
+          )}
         </div>
       </div>
 

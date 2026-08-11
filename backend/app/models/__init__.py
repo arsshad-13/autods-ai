@@ -3,5 +3,6 @@ from app.models.user import User
 from app.models.dataset import Dataset
 from app.models.dataset_profile import DatasetProfile
 from app.models.dataset_preprocessing import DatasetPreprocessing
+from app.models.trained_model import TrainedModel
 
-__all__ = ["Base", "User", "Dataset", "DatasetProfile", "DatasetPreprocessing"]
+__all__ = ["Base", "User", "Dataset", "DatasetProfile", "DatasetPreprocessing", "TrainedModel"]

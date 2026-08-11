@@ -150,3 +150,36 @@ export interface DatasetPreprocessingResponse {
   created_at: string;
   updated_at: string;
 }
+
+export interface TrainedModel {
+  id: number;
+  uuid: string;
+  dataset_id: number;
+  name: string;
+  algorithm: string;
+  task_type: string;
+  target_column: string;
+  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  metrics?: Record<string, number>;
+  hyperparameters?: Record<string, any>;
+  metadata_info?: Record<string, any>;
+  training_duration?: number;
+  is_best: boolean;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ModelTrainingStartResponse {
+  message: string;
+  trained_models: TrainedModel[];
+}
+
+export interface ModelTrainingStatusResponse {
+  message: string;
+  /** NOT_STARTED | RUNNING | COMPLETED | FAILED */
+  status: string;
+  dataset_uuid: string;
+  trained_models: TrainedModel[];
+  error_message?: string | null;
+}

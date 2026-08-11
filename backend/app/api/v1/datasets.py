@@ -299,3 +299,131 @@ async def download_cleaned_dataset(
         media_type="application/octet-stream"
     )
 
+from app.schemas.trained_model import TrainedModelResponse, ModelTrainingStartResponse, ModelTrainingStatusResponse
+from app.services import model_training_service
+from typing import List
+
+
+@router.post(
+    "/{dataset_uuid}/models/train",
+    response_model=ModelTrainingStatusResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start asynchronous ML model training on the preprocessed dataset",
+)
+async def train_models(
+    dataset_uuid: UUID,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> ModelTrainingStatusResponse:
+    """
+    Starts model training in the background and returns immediately.
+    The response status will be RUNNING with PENDING placeholder model records.
+    Poll GET /{dataset_uuid}/models/status to check progress.
+    """
+    placeholder_records, bg_params = await model_training_service.train_models(
+        dataset_uuid=dataset_uuid,
+        user_id=current_user.id,
+        db=db,
+    )
+
+    background_tasks.add_task(
+        model_training_service.run_model_training,
+        **bg_params,
+    )
+
+    return ModelTrainingStatusResponse(
+        message="Model training started successfully.",
+        status="RUNNING",
+        dataset_uuid=str(dataset_uuid),
+        trained_models=[TrainedModelResponse.model_validate(r) for r in placeholder_records],
+    )
+
+
+@router.get(
+    "/{dataset_uuid}/models",
+    response_model=List[TrainedModelResponse],
+    summary="List all trained models for a dataset",
+)
+async def get_models(
+    dataset_uuid: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> List[TrainedModelResponse]:
+    """
+    Get all trained models for the specified dataset.
+    """
+    models = await model_training_service.get_trained_models(
+        dataset_uuid=dataset_uuid,
+        user_id=current_user.id,
+        db=db,
+    )
+    return [TrainedModelResponse.model_validate(m) for m in models]
+
+
+@router.get(
+    "/{dataset_uuid}/models/best",
+    response_model=TrainedModelResponse,
+    summary="Get the best trained model",
+)
+async def get_best_model(
+    dataset_uuid: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> TrainedModelResponse:
+    """
+    Get the best performing model automatically selected after training.
+    """
+    model = await model_training_service.get_best_model(
+        dataset_uuid=dataset_uuid,
+        user_id=current_user.id,
+        db=db,
+    )
+    if not model:
+        raise HTTPException(status_code=404, detail="No models trained for this dataset.")
+    return TrainedModelResponse.model_validate(model)
+
+
+@router.get(
+    "/{dataset_uuid}/models/status",
+    response_model=ModelTrainingStatusResponse,
+    summary="Get the current training status and available model results",
+)
+async def get_training_status(
+    dataset_uuid: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> ModelTrainingStatusResponse:
+    """
+    Returns the aggregate training status (NOT_STARTED | RUNNING | COMPLETED | FAILED)
+    and all available model records for the dataset.
+    Intended for frontend polling after starting a training job.
+    """
+    return await model_training_service.get_training_status(
+        dataset_uuid=dataset_uuid,
+        user_id=current_user.id,
+        db=db,
+    )
+
+
+@router.get(
+    "/{dataset_uuid}/models/{model_uuid}",
+    response_model=TrainedModelResponse,
+    summary="Get details of a specific trained model",
+)
+async def get_model(
+    dataset_uuid: UUID,
+    model_uuid: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> TrainedModelResponse:
+    """
+    Get details of a specific trained model by UUID.
+    """
+    model = await model_training_service.get_model(
+        dataset_uuid=dataset_uuid,
+        model_uuid=model_uuid,
+        user_id=current_user.id,
+        db=db,
+    )
+    return TrainedModelResponse.model_validate(model)
