@@ -49,14 +49,22 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
+    confusion_matrix,
     f1_score,
     mean_absolute_error,
     mean_squared_error,
     precision_score,
     r2_score,
     recall_score,
+    roc_auc_score,
 )
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import (
+    KFold,
+    StratifiedKFold,
+    TimeSeriesSplit,
+    cross_val_score,
+    train_test_split,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
@@ -144,6 +152,58 @@ def _detect_datetime_column(df: pd.DataFrame) -> Optional[str]:
 
     return None
 
+
+def _infer_time_series_frequency(df: pd.DataFrame, datetime_col: str) -> Optional[str]:
+    """
+    Infer the frequency of a time series dataset from its datetime column.
+    
+    1. Parse datetime.
+    2. Sort chronologically.
+    3. Calculate intervals and find dominant frequency.
+    4. Return pandas-compatible frequency string or None.
+    """
+    try:
+        dt_series = pd.to_datetime(df[datetime_col], errors="coerce").dropna()
+        if len(dt_series) < 2:
+            return None
+        
+        dt_series = dt_series.sort_values()
+        diffs = dt_series.diff().dropna()
+        
+        if diffs.empty:
+            return None
+            
+        # Get the most common difference
+        mode_diff = diffs.mode()
+        if mode_diff.empty:
+            return None
+            
+        diff = mode_diff.iloc[0]
+        
+        days = diff.days
+        seconds = diff.seconds
+        
+        if days == 1 and seconds == 0:
+            return "D"
+        elif days == 7 and seconds == 0:
+            return "W"
+        elif days >= 28 and days <= 31 and seconds == 0:
+            return "MS"
+        elif days >= 89 and days <= 92 and seconds == 0:
+            return "QS"
+        elif days >= 365 and days <= 366 and seconds == 0:
+            return "YS"
+        elif days == 0 and seconds == 3600:
+            return "h"
+        elif days == 0 and seconds == 60:
+            return "min"
+        elif days == 0 and seconds == 1:
+            return "s"
+        else:
+            return None
+    except Exception as e:
+        logger.warning("Failed to infer time series frequency: %s", e)
+        return None
 
 def _validate_time_series_requirements(
     df: pd.DataFrame,
@@ -455,8 +515,286 @@ def _calculate_metrics(
             logger.warning("MAPE undefined: all y_test values are zero. Storing NaN.")
             mape = float("nan")
         metrics["MAPE"] = mape
-
     return metrics
+
+
+def _run_leakage_checks(
+    df: pd.DataFrame,
+    target_col: str,
+    feature_cols: List[str],
+) -> Dict[str, Any]:
+    """
+    Perform deterministic automated leakage & data quality checks before model training.
+    """
+    warnings: List[str] = []
+
+    # 1. Target column in features
+    if target_col in feature_cols:
+        warnings.append(f"Target column '{target_col}' was detected in feature list and removed.")
+
+    # 2. Duplicate rows
+    dup_count = int(df.duplicated().sum())
+    if dup_count > 0:
+        warnings.append(f"Dataset contains {dup_count} duplicate row(s).")
+
+    # 3. Conflicting targets for identical feature rows
+    if feature_cols and target_col in df.columns:
+        feature_dups = df.duplicated(subset=feature_cols, keep=False)
+        if feature_dups.any():
+            conflicting = df[feature_dups].groupby(feature_cols)[target_col].nunique()
+            conflict_count = int((conflicting > 1).sum())
+            if conflict_count > 0:
+                warnings.append(
+                    f"Detected {conflict_count} set(s) of identical feature rows with conflicting target values."
+                )
+
+    # 4. Constant features
+    constant_cols = [c for c in feature_cols if df[c].nunique(dropna=False) <= 1]
+    if constant_cols:
+        warnings.append(f"Constant feature(s) detected: {constant_cols}.")
+
+    # 5. High-cardinality identifiers (ID columns)
+    id_cols = [c for c in feature_cols if df[c].nunique(dropna=True) == len(df) and len(df) >= 15]
+    if id_cols:
+        warnings.append(f"High-cardinality identifier column(s) detected: {id_cols}.")
+
+    # 6. Potential target leakage from column names
+    target_clean = target_col.lower().replace("_", "").replace("-", "")
+    leak_name_cols = []
+    for c in feature_cols:
+        c_clean = c.lower().replace("_", "").replace("-", "")
+        if c_clean != target_clean and (target_clean in c_clean or c_clean in target_clean):
+            leak_name_cols.append(c)
+    if leak_name_cols:
+        warnings.append(f"Potential target name leakage in column(s): {leak_name_cols}.")
+
+    return {
+        "checks_passed": len(warnings) == 0,
+        "warnings": warnings,
+        "duplicate_rows": dup_count,
+        "constant_columns": constant_cols,
+        "high_cardinality_columns": id_cols,
+        "potential_leakage_columns": leak_name_cols,
+    }
+
+
+def _run_cross_validation(
+    pipeline: Pipeline,
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    task_type: str,
+) -> Dict[str, Any]:
+    """
+    Perform adaptive, leakage-safe cross-validation on training data.
+    """
+    n_train = len(X_train)
+    if n_train < 6:
+        return {
+            "cv_score": None,
+            "cv_score_std": None,
+            "cv_f1": None,
+            "cv_method": "None (Dataset too small for CV)",
+            "n_splits": 0,
+        }
+
+    if task_type == "Classification":
+        min_class_count = int(y_train.value_counts().min())
+        if min_class_count < 2:
+            return {
+                "cv_score": None,
+                "cv_score_std": None,
+                "cv_f1": None,
+                "cv_method": "None (Smallest class has < 2 samples in train set)",
+                "n_splits": 0,
+            }
+        n_splits = min(5, max(2, min_class_count))
+        try:
+            cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+            acc_scores = cross_val_score(pipeline, X_train, y_train, cv=cv, scoring="accuracy")
+            f1_scores = cross_val_score(pipeline, X_train, y_train, cv=cv, scoring="f1_weighted")
+            return {
+                "cv_score": float(np.mean(acc_scores)),
+                "cv_score_std": float(np.std(acc_scores)),
+                "cv_f1": float(np.mean(f1_scores)),
+                "cv_method": f"{n_splits}-Fold Stratified CV",
+                "n_splits": n_splits,
+            }
+        except Exception as e:
+            logger.warning("Classification cross-validation failed: %s", e)
+            return {
+                "cv_score": None,
+                "cv_score_std": None,
+                "cv_f1": None,
+                "cv_method": f"Failed ({str(e)[:50]})",
+                "n_splits": 0,
+            }
+
+    elif task_type in ["Time Series", "Forecasting"]:
+        n_splits = min(3, max(2, n_train // 25))
+        if n_train < 25 or n_splits < 2:
+            return {
+                "cv_score": None,
+                "cv_score_std": None,
+                "cv_method": "None (Time series training set too small for expanding window CV)",
+                "n_splits": 0,
+            }
+        try:
+            cv = TimeSeriesSplit(n_splits=n_splits)
+            rmse_scores = -cross_val_score(pipeline, X_train, y_train, cv=cv, scoring="neg_root_mean_squared_error")
+            return {
+                "cv_score": float(np.mean(rmse_scores)),
+                "cv_score_std": float(np.std(rmse_scores)),
+                "cv_method": f"{n_splits}-Fold TimeSeriesSplit",
+                "n_splits": n_splits,
+            }
+        except Exception as e:
+            logger.warning("Time series CV failed: %s", e)
+            return {
+                "cv_score": None,
+                "cv_score_std": None,
+                "cv_method": f"Failed ({str(e)[:50]})",
+                "n_splits": 0,
+            }
+    else:  # Regression
+        n_splits = min(5, max(2, n_train // 6))
+        if n_splits < 2:
+            return {
+                "cv_score": None,
+                "cv_score_std": None,
+                "cv_method": "None (Dataset too small for CV)",
+                "n_splits": 0,
+            }
+        try:
+            cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+            rmse_scores = -cross_val_score(pipeline, X_train, y_train, cv=cv, scoring="neg_root_mean_squared_error")
+            return {
+                "cv_score": float(np.mean(rmse_scores)),
+                "cv_score_std": float(np.std(rmse_scores)),
+                "cv_method": f"{n_splits}-Fold K-Fold CV",
+                "n_splits": n_splits,
+            }
+        except Exception as e:
+            logger.warning("Regression CV failed: %s", e)
+            return {
+                "cv_score": None,
+                "cv_score_std": None,
+                "cv_method": f"Failed ({str(e)[:50]})",
+                "n_splits": 0,
+            }
+
+
+def _assess_generalization(
+    task_type: str,
+    train_score: float,
+    test_score: float,
+    cv_score: Optional[float] = None,
+) -> Tuple[bool, str]:
+    """
+    Detect potential overfitting and return an explainable generalization status.
+    """
+    if task_type == "Classification":
+        diff = train_score - test_score
+        if train_score > 0.95 and test_score < 0.80:
+            return True, "Severe Overfitting"
+        elif diff >= 0.12:
+            return True, "Moderate Overfitting"
+        elif test_score >= 0.90:
+            return False, "High Performance"
+        else:
+            return False, "Good Generalization"
+    else:
+        if test_score > 0 and train_score > 0:
+            ratio = test_score / train_score
+            if ratio >= 2.0:
+                return True, "Severe Overfitting"
+            elif ratio >= 1.4:
+                return True, "Moderate Overfitting"
+            else:
+                return False, "Good Generalization"
+        return False, "Good Generalization"
+
+
+def _calculate_comprehensive_evaluation(
+    task_type: str,
+    pipeline: Pipeline,
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_test: pd.DataFrame,
+    y_test: pd.Series,
+    train_preds: np.ndarray,
+    test_preds: np.ndarray,
+    cv_results: Dict[str, Any],
+) -> Tuple[Dict[str, float], Dict[str, Any]]:
+    """
+    Compute comprehensive metrics on both train and test splits,
+    plus ROC-AUC, Confusion Matrix, and Generalization Assessment.
+    """
+    # Baseline test metrics (keeps existing keys for backward compatibility)
+    metrics = _calculate_metrics(task_type, y_test, test_preds)
+    eval_details: Dict[str, Any] = {}
+
+    if task_type == "Classification":
+        train_acc = float(accuracy_score(y_train, train_preds))
+        train_f1 = float(f1_score(y_train, train_preds, average="weighted", zero_division=0))
+        test_acc = metrics["Accuracy"]
+        test_f1 = metrics["F1 Score"]
+
+        metrics["Train Accuracy"] = train_acc
+        metrics["Test Accuracy"] = test_acc
+        if cv_results.get("cv_score") is not None:
+            metrics["CV Score"] = float(cv_results["cv_score"])
+            metrics["CV Score Std"] = float(cv_results.get("cv_score_std", 0.0))
+
+        # ROC-AUC if predict_proba is available
+        roc_auc = None
+        if hasattr(pipeline, "predict_proba"):
+            try:
+                probas = pipeline.predict_proba(X_test)
+                unique_classes = np.unique(y_train)
+                if len(unique_classes) == 2 and probas.shape[1] == 2:
+                    roc_auc = float(roc_auc_score(y_test, probas[:, 1]))
+                elif len(unique_classes) > 2 and probas.shape[1] == len(unique_classes):
+                    roc_auc = float(roc_auc_score(y_test, probas, multi_class="ovr", average="weighted"))
+            except Exception as e:
+                logger.debug("ROC-AUC computation skipped: %s", e)
+                roc_auc = None
+
+        if roc_auc is not None:
+            metrics["ROC-AUC"] = roc_auc
+
+        # Confusion matrix
+        try:
+            cm = confusion_matrix(y_test, test_preds).tolist()
+            eval_details["confusion_matrix"] = cm
+        except Exception:
+            eval_details["confusion_matrix"] = None
+
+        # Overfitting check
+        overfitting_detected, generalization_status = _assess_generalization(
+            task_type, train_acc, test_acc, cv_results.get("cv_score")
+        )
+        eval_details["overfitting_detected"] = overfitting_detected
+        eval_details["generalization_status"] = generalization_status
+        eval_details["train_f1"] = train_f1
+
+    else:  # Regression or Time Series
+        train_mae = float(mean_absolute_error(y_train, train_preds))
+        train_rmse = float(np.sqrt(mean_squared_error(y_train, train_preds)))
+        train_r2 = float(r2_score(y_train, train_preds))
+
+        metrics["Train RMSE"] = train_rmse
+        metrics["Train R2"] = train_r2
+        if cv_results.get("cv_score") is not None:
+            metrics["CV Score"] = float(cv_results["cv_score"])
+            metrics["CV Score Std"] = float(cv_results.get("cv_score_std", 0.0))
+
+        overfitting_detected, generalization_status = _assess_generalization(
+            task_type, train_rmse, metrics["RMSE"], cv_results.get("cv_score")
+        )
+        eval_details["overfitting_detected"] = overfitting_detected
+        eval_details["generalization_status"] = generalization_status
+
+    return metrics, eval_details
 
 
 # ---------------------------------------------------------------------------
@@ -903,6 +1241,11 @@ async def _execute_training_pipeline(
 
             # --- Step 5: Build X and y (exclude datetime from features) ---
             try:
+                ts_frequency = _infer_time_series_frequency(df, dt_col)
+                if ts_frequency is None:
+                    logger.warning("Dataset %s: Could not infer a regular time-series frequency.", dataset_uuid)
+                last_observed_timestamp = str(df[dt_col].iloc[-1]) if not df.empty else None
+
                 y = df[target_column].copy()
 
                 # X: all columns except target and datetime
@@ -965,8 +1308,11 @@ async def _execute_training_pipeline(
                     )
 
                 y = df[target_column]
+                target_label_mapping = None
                 if y.dtype == object or str(y.dtype) == "category":
-                    y = y.astype("category").cat.codes
+                    cat_y = y.astype("category")
+                    target_label_mapping = {str(code): str(label) for code, label in enumerate(cat_y.cat.categories)}
+                    y = cat_y.cat.codes
 
                 X = df.drop(columns=[target_column])
                 X_numeric = X.select_dtypes(include=[np.number])
@@ -989,11 +1335,28 @@ async def _execute_training_pipeline(
                 await db.commit()
                 return
 
+            # --- Step 6: Stratified / Random split for Classification ---
             try:
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X, y, test_size=0.2, random_state=42
-                )
-                split_meta = {"random_state": 42}
+                min_class_samples = int(y.value_counts().min()) if len(y) > 0 else 0
+                can_stratify = min_class_samples >= 2 and len(y) >= 10
+                if can_stratify:
+                    X_train, X_test, y_train, y_test = train_test_split(
+                        X, y, test_size=0.2, random_state=42, stratify=y
+                    )
+                    split_method = "80/20 Stratified Split"
+                else:
+                    X_train, X_test, y_train, y_test = train_test_split(
+                        X, y, test_size=0.2, random_state=42
+                    )
+                    split_method = "80/20 Random Split"
+
+                split_meta = {
+                    "random_state": 42,
+                    "stratified": can_stratify,
+                    "split_method": split_method,
+                }
+                if target_label_mapping:
+                    split_meta["target_label_mapping"] = target_label_mapping
                 dt_col = None
                 lag_feature_names = []
                 rolling_feature_names = []
@@ -1051,7 +1414,12 @@ async def _execute_training_pipeline(
                 X_train, X_test, y_train, y_test = train_test_split(
                     X, y, test_size=0.2, random_state=42
                 )
-                split_meta = {"random_state": 42}
+                split_method = "80/20 Random Split"
+                split_meta = {
+                    "random_state": 42,
+                    "stratified": False,
+                    "split_method": split_method,
+                }
                 dt_col = None
                 lag_feature_names = []
                 rolling_feature_names = []
@@ -1066,6 +1434,24 @@ async def _execute_training_pipeline(
                 "Random Forest Regressor": RandomForestRegressor(n_estimators=100, random_state=42),
                 "Decision Tree Regressor": DecisionTreeRegressor(random_state=42),
             }
+
+        # Run automated leakage checks
+        leakage_checks = _run_leakage_checks(df, target_column, feature_cols)
+        if leakage_checks["warnings"]:
+            logger.warning(
+                "Dataset %s leakage checks identified warnings: %s",
+                dataset_uuid,
+                leakage_checks["warnings"],
+            )
+
+        # Small dataset warning
+        dataset_size_warning = None
+        if len(df) < 50:
+            dataset_size_warning = (
+                f"Small dataset ({len(df)} rows): model performance estimates may be unstable. "
+                "Consider providing more training data."
+            )
+            logger.info("Dataset %s: %s", dataset_uuid, dataset_size_warning)
 
         # Common train/test row counts for metadata
         train_rows = len(X_train)
@@ -1088,26 +1474,45 @@ async def _execute_training_pipeline(
             try:
                 start_t = time.time()
 
-                # Wrap estimator in leakage-free Pipeline
+                # 1. Wrap estimator in leakage-free Pipeline
                 pipeline = _build_model_pipeline(estimator, task_type)
 
-                # Fit ONLY on training data — this is where imputer and scaler learn statistics
+                # 2. Run adaptive cross-validation on X_train, y_train ONLY
+                cv_results = _run_cross_validation(pipeline, X_train, y_train, task_type)
+
+                # 3. Fit ONLY on training data — imputer and scaler learn statistics on X_train
                 pipeline.fit(X_train, y_train)
 
-                # Predict on test data — pipeline applies learned transforms without refitting
-                preds = pipeline.predict(X_test)
+                # 4. Predict on train and test splits
+                train_preds = pipeline.predict(X_train)
+                test_preds = pipeline.predict(X_test)
                 dur = time.time() - start_t
 
-                # Calculate metrics
-                metrics = _calculate_metrics(task_type, y_test, preds)
+                # 5. Calculate comprehensive metrics (train, test, CV, ROC-AUC, CM, overfitting)
+                metrics, eval_details = _calculate_comprehensive_evaluation(
+                    task_type=task_type,
+                    pipeline=pipeline,
+                    X_train=X_train,
+                    y_train=y_train,
+                    X_test=X_test,
+                    y_test=y_test,
+                    train_preds=train_preds,
+                    test_preds=test_preds,
+                    cv_results=cv_results,
+                )
 
-                # Persist the COMPLETE fitted Pipeline (includes imputer + scaler + estimator)
+                # 6. Persist the COMPLETE fitted Pipeline (imputer + scaler + estimator)
                 timestamp = int(time.time())
                 filename = f"{dataset_uuid}_{name.replace(' ', '_')}_{timestamp}.joblib"
                 model_path = models_dir / filename
                 joblib.dump(pipeline, model_path)
 
-                # Build rich metadata for this model
+                # 7. Build rich metadata for this model
+                split_method_str = split_meta.get("split_method", "80/20 Split")
+                if task_type in ["Forecasting", "Time Series"]:
+                    split_method_str = "80/20 Chronological Split (No Shuffle)"
+                cv_method_str = cv_results.get("cv_method", "None")
+
                 metadata_info: Dict[str, Any] = {
                     "task_type": task_type,
                     "target_column": target_column,
@@ -1115,13 +1520,32 @@ async def _execute_training_pipeline(
                     "train_rows": train_rows,
                     "test_rows": test_rows,
                     "pipeline_steps": ["imputer", "scaler", "model"],
+                    "evaluation_method": {
+                        "split": split_method_str,
+                        "cv": cv_method_str,
+                        "primary_metric": "F1 Score" if task_type == "Classification" else "RMSE",
+                    },
+                    "cv_score": cv_results.get("cv_score"),
+                    "cv_score_std": cv_results.get("cv_score_std"),
+                    "cv_f1": cv_results.get("cv_f1"),
+                    "cv_method": cv_method_str,
+                    "confusion_matrix": eval_details.get("confusion_matrix"),
+                    "overfitting_detected": eval_details.get("overfitting_detected", False),
+                    "generalization_status": eval_details.get("generalization_status", "Good Generalization"),
+                    "dataset_size_warning": dataset_size_warning,
+                    "leakage_checks": leakage_checks,
                     **split_meta,
                 }
+
                 # Time-series specific metadata
                 if task_type in ["Forecasting", "Time Series"]:
                     metadata_info["datetime_column"] = dt_col
                     metadata_info["lag_features"] = lag_feature_names
                     metadata_info["rolling_features"] = rolling_feature_names
+                    metadata_info["frequency"] = ts_frequency
+                    metadata_info["last_observed_timestamp"] = last_observed_timestamp
+                    metadata_info["max_lag"] = 14
+                    metadata_info["rolling_windows"] = [7]
 
                 rec.status = "COMPLETED"
                 rec.metrics = metrics
@@ -1131,11 +1555,12 @@ async def _execute_training_pipeline(
                 rec.metadata_info = metadata_info
 
                 logger.info(
-                    "Trained '%s' for dataset %s in %.2fs — metrics=%s",
+                    "Trained '%s' for dataset %s in %.2fs — metrics=%s (gen_status=%s)",
                     name,
                     dataset_uuid,
                     dur,
                     metrics,
+                    eval_details.get("generalization_status"),
                 )
 
             except Exception as e:
@@ -1146,17 +1571,42 @@ async def _execute_training_pipeline(
                 rec.error_message = f"{type(e).__name__}: {str(e)[:200]}"
 
         # ----------------------------------------------------------------
-        # Select best model among COMPLETED records
+        # Select best model based on validation / generalization performance
         # ----------------------------------------------------------------
         completed = [r for r in records if r.status == "COMPLETED"]
         if completed:
             if task_type == "Classification":
-                best = max(completed, key=lambda r: (r.metrics or {}).get("Accuracy", 0.0))
+                def _cls_score(r: TrainedModel) -> float:
+                    m = r.metrics or {}
+                    meta = r.metadata_info or {}
+                    f1 = m.get("F1 Score", 0.0)
+                    cv_f1 = meta.get("cv_f1")
+                    if cv_f1 is None:
+                        cv_f1 = m.get("CV Score", f1)
+                    is_overfit = meta.get("overfitting_detected", False)
+                    # Blend CV & test F1 for robust generalization; penalize severe overfitting
+                    score = 0.5 * cv_f1 + 0.5 * f1
+                    if is_overfit:
+                        score -= 0.10
+                    return score
+
+                best = max(completed, key=_cls_score)
             else:
-                # For Regression and Time Series, minimise RMSE
-                best = min(
-                    completed, key=lambda r: (r.metrics or {}).get("RMSE", float("inf"))
-                )
+                def _reg_score(r: TrainedModel) -> float:
+                    m = r.metrics or {}
+                    meta = r.metadata_info or {}
+                    rmse = m.get("RMSE", float("inf"))
+                    cv_rmse = meta.get("cv_score")
+                    if cv_rmse is None:
+                        cv_rmse = rmse
+                    is_overfit = meta.get("overfitting_detected", False)
+                    score = 0.5 * cv_rmse + 0.5 * rmse
+                    if is_overfit:
+                        score *= 1.2
+                    return score
+
+                best = min(completed, key=_reg_score)
+
             best.is_best = True
             logger.info(
                 "Best model for dataset %s: '%s'", dataset_uuid, best.algorithm

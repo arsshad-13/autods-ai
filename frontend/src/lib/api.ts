@@ -294,3 +294,23 @@ export async function getModelDetails(datasetUuid: string, modelUuid: string): P
     throw new ApiError(error.response?.data?.detail || "Failed to retrieve model details");
   }
 }
+
+// Phase 7 — Tuning API
+export async function tuneModel(
+  datasetUuid: string,
+  modelUuid: string,
+  nTrials: number = 30,
+): Promise<{ model_uuid: string; tuning_status: string; message: string }> {
+  try {
+    const res = await api.post(
+      `/api/v1/datasets/${datasetUuid}/models/${modelUuid}/tune`,
+      { n_trials: nTrials },
+    );
+    return res.data;
+  } catch (error: any) {
+    throw new ApiError(
+      error.response?.data?.detail || 'Failed to start hyperparameter tuning',
+    );
+  }
+}
+

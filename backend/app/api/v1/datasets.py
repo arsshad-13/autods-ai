@@ -427,3 +427,127 @@ async def get_model(
         db=db,
     )
     return TrainedModelResponse.model_validate(model)
+
+
+from app.schemas.model_inference import PredictionRequest, PredictionResponse, BatchPredictionRequest, BatchPredictionResponse
+from app.services import model_inference_service
+
+@router.post(
+    "/{dataset_uuid}/models/{model_uuid}/predict",
+    response_model=PredictionResponse,
+    summary="Predict using a specific trained classification or regression model",
+)
+async def predict_model(
+    dataset_uuid: UUID,
+    model_uuid: UUID,
+    request: PredictionRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> PredictionResponse:
+    """
+    Perform inference using a trained model.
+    Pass a JSON object with a 'features' dictionary matching the model's expected schema.
+    """
+    return await model_inference_service.predict(
+        dataset_uuid=dataset_uuid,
+        model_uuid=model_uuid,
+        user_id=current_user.id,
+        request=request,
+        db=db,
+    )
+
+@router.post(
+    "/{dataset_uuid}/models/{model_uuid}/predict/batch",
+    response_model=BatchPredictionResponse,
+    summary="Batch predict using a specific trained classification or regression model",
+)
+async def predict_model_batch(
+    dataset_uuid: UUID,
+    model_uuid: UUID,
+    request: BatchPredictionRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> BatchPredictionResponse:
+    """
+    Perform batch inference using a trained model.
+    Pass a JSON object with a 'rows' array matching the model's expected schema.
+    """
+    return await model_inference_service.predict_batch(
+        dataset_uuid=dataset_uuid,
+        model_uuid=model_uuid,
+        user_id=current_user.id,
+        request=request,
+        db=db,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 — Optuna Hyperparameter Tuning endpoints
+# ---------------------------------------------------------------------------
+
+from app.services import tuning_service as _tuning_service
+from app.schemas.tuning import TuneRequest, TuneStatusResponse
+
+
+@router.post(
+    "/{dataset_uuid}/models/{model_uuid}/tune",
+    response_model=TuneStatusResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start Optuna hyperparameter tuning for a trained model",
+)
+async def tune_model(
+    dataset_uuid: UUID,
+    model_uuid: UUID,
+    background_tasks: BackgroundTasks,
+    request: TuneRequest = TuneRequest(),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> TuneStatusResponse:
+    """
+    Trigger Optuna hyperparameter optimisation on a COMPLETED trained model.
+
+    - Authenticates the current user.
+    - Verifies dataset and model ownership.
+    - Prevents concurrent tuning of the same model.
+    - Returns 202 immediately; tuning runs as a FastAPI BackgroundTask.
+    - Poll GET /{dataset_uuid}/models/{model_uuid} and inspect
+      metadata_info.tuning_status for progress.
+
+    tuning_status values: QUEUED | RUNNING | COMPLETED | FAILED
+    """
+    model = await _tuning_service.validate_model_for_tuning(
+        dataset_uuid=dataset_uuid,
+        model_uuid=model_uuid,
+        user_id=current_user.id,
+        db=db,
+    )
+
+    # Mark as QUEUED synchronously so subsequent poll calls see it immediately
+    meta = dict(model.metadata_info or {})
+    meta["tuning_status"] = "QUEUED"
+    meta["tuning_n_trials"] = request.n_trials
+    model.metadata_info = meta
+    db.add(model)
+    await db.commit()
+    await db.refresh(model)
+
+    background_tasks.add_task(
+        _tuning_service.run_tuning,
+        dataset_uuid=str(dataset_uuid),
+        model_uuid=str(model_uuid),
+        user_id=current_user.id,
+        n_trials=request.n_trials,
+    )
+
+    return TuneStatusResponse(
+        model_uuid=str(model_uuid),
+        dataset_uuid=str(dataset_uuid),
+        algorithm=model.algorithm,
+        tuning_status="QUEUED",
+        n_trials=request.n_trials,
+        message=(
+            f"Hyperparameter tuning queued for '{model.algorithm}' with "
+            f"{request.n_trials} trials. "
+            "Poll GET /datasets/{dataset_uuid}/models/{model_uuid} for status."
+        ),
+    )

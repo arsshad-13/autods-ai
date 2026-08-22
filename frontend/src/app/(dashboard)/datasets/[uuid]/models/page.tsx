@@ -287,7 +287,7 @@ export default function ModelTrainingPage() {
                 <p className="text-gray-500">Training baseline models. Please wait...</p>
               </div>
             ) : (
-              <ModelLeaderboard models={models} />
+              <ModelLeaderboard models={models} datasetUuid={uuid} />
             )}
           </CardContent>
         </Card>
